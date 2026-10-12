@@ -23,7 +23,7 @@ import manifest from "../bundled-tools.json"
 //    containing both `uv` and `uvx`, so this script extracts before placing
 //    binaries in resources/tools/.
 
-export type SupportedPlatform = "darwin" | "win32"
+export type SupportedPlatform = "darwin" | "linux" | "win32"
 export type SupportedArch = "arm64" | "x64"
 
 const execFileAsync = promisify(execFile)

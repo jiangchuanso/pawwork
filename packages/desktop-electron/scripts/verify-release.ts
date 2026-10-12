@@ -33,11 +33,17 @@ const RELEASE_PAGE_LIMIT = 100
 export function releaseAssetNames(version: string) {
   return [
     ...new Set([
-      ...RELEASE_TARGETS.flatMap((target) => [
-        releaseAssetName(target, version, target.installerExt),
-        releaseAssetName(target, version, target.updaterExt),
-        `${releaseAssetName(target, version, target.updaterExt)}.blockmap`,
-      ]),
+      ...EXPECTED_RELEASE_TARGETS.flatMap((target) => {
+        const assets = [
+          releaseAssetName(target, version, target.installerExt),
+          releaseAssetName(target, version, target.updaterExt),
+        ]
+        // deb packages (and other non-blockmap formats) produce no .blockmap.
+        if (target.blockmap !== false) {
+          assets.push(`${releaseAssetName(target, version, target.updaterExt)}.blockmap`)
+        }
+        return assets
+      }),
       ...METADATA_FILES,
     ]),
   ]
@@ -47,20 +53,21 @@ export function releaseAssetNames(version: string) {
 // (containing its build commit) so the auto-publisher can confirm every target
 // of a release was built from the same commit before publishing. One distinct
 // asset per target — never a shared mutable field — so concurrent targets cannot
-// race on it. Not part of releaseAssetNames, so the R2 mirror never copies them.
+// race on it. Not part of releaseAssetNames, so nothing that consumes a release
+// by asset list (a download mirror, the site manifest) picks them up.
 export function releaseProvenanceAssetName(os: string, arch: string, version: string) {
   return `pawwork-${os}-${arch}-${version}.commit`
 }
 
 export function releaseProvenanceAssetNames(version: string) {
-  return RELEASE_TARGETS.map((target) => releaseProvenanceAssetName(target.os, target.arch, version))
+  return EXPECTED_RELEASE_TARGETS.map((target) => releaseProvenanceAssetName(target.os, target.arch, version))
 }
 
 export function releaseUpdaterAssetNames(version: string): Record<MetadataFile, string[]> {
   return Object.fromEntries(
     METADATA_FILES.map((metadata) => [
       metadata,
-      RELEASE_TARGETS.filter((target) => target.metadata === metadata).map((target) =>
+      EXPECTED_RELEASE_TARGETS.filter((target) => target.metadata === metadata).map((target) =>
         releaseAssetName(target, version, target.updaterExt),
       ),
     ]),
@@ -115,7 +122,10 @@ function releaseVersion(tag: string) {
   return normalizeTag(tag).slice(1)
 }
 
-export function verifyReleasePayload(input: VerificationInput, options?: { allowDraft?: boolean }) {
+export function verifyReleasePayload(
+  input: VerificationInput,
+  options?: { allowDraft?: boolean; allowPrerelease?: boolean },
+) {
   const failures: string[] = []
   const assetNames = new Set(input.release.assets.map((asset) => asset.name))
   let version: string | undefined
@@ -126,7 +136,13 @@ export function verifyReleasePayload(input: VerificationInput, options?: { allow
   }
 
   if (input.release.draft && !options?.allowDraft) failures.push(`Release ${input.release.tag_name} is still a draft`)
-  if (input.release.prerelease) failures.push(`Release ${input.release.tag_name} is marked as a prerelease`)
+  // A prerelease is not a shippable release, so a verifier checking "is this
+  // release what we meant to publish" must report it. The one caller that may
+  // legitimately see one is the auto-publisher under an explicit re-publish
+  // opt-in, which is on its way to clearing the flag.
+  if (input.release.prerelease && !options?.allowPrerelease) {
+    failures.push(`Release ${input.release.tag_name} is marked as a prerelease`)
+  }
 
   const urls = new Map(
     METADATA_FILES.map((metadata) => {
@@ -294,8 +310,8 @@ if (import.meta.main) {
 }
 import { parseUpdaterMetadata } from "./updater-metadata"
 import {
+  EXPECTED_RELEASE_TARGETS,
   METADATA_FILES,
-  RELEASE_TARGETS,
   releaseAssetName,
   type MetadataFile,
 } from "./release-targets"

@@ -11,7 +11,6 @@ import pkg from "electron-updater"
 import { PAWWORK_APP } from "./app-identity"
 import {
   CHANNEL,
-  DOWNLOAD_PUBLIC_BASE,
   UPDATE_CHANNEL,
   UPDATE_GITHUB_OWNER,
   UPDATE_GITHUB_REPO,
@@ -35,7 +34,7 @@ import { failingProfileBundle, removeProfileBundle } from "./dsh-profile-repair"
 import { migrateDshHome, resolveDshHome } from "./pawwork-home"
 import { initLogging } from "./logging"
 import { detectSystemMenuLocale, type MenuLocale } from "./menu-labels"
-import { createUpdateFeed, githubFeed, r2Feed, type FeedTarget } from "./update-feed"
+import { createUpdateFeed, githubFeed, type FeedTarget } from "./update-feed"
 import { applyUserShellPath } from "./user-shell-env"
 import { PAWWORK_GITHUB_ISSUE_URL } from "./support-links"
 import { createUpdaterController } from "./updater"
@@ -138,10 +137,11 @@ let currentProgress: number | null = null
 const lifecycle = new DshLifecycle({ launch: launchDsh, onChange: handleLifecycleChange })
 
 function buildUpdateFeeds(): FeedTarget[] {
-  return [
-    r2Feed(DOWNLOAD_PUBLIC_BASE, UPDATE_CHANNEL, UPDATE_CHANNEL_FILE),
-    githubFeed(UPDATE_GITHUB_OWNER, UPDATE_GITHUB_REPO, UPDATE_CHANNEL, UPDATE_CHANNEL_FILE),
-  ]
+  // GitHub Releases only. This fork does not mirror its releases to the
+  // upstream project's Cloudflare R2 bucket (dl.pawwork.ai), so that feed would
+  // serve a different repository's builds — the app must never update itself
+  // from a release its own repository did not publish.
+  return [githubFeed(UPDATE_GITHUB_OWNER, UPDATE_GITHUB_REPO, UPDATE_CHANNEL, UPDATE_CHANNEL_FILE)]
 }
 
 const updateFeed = createUpdateFeed({

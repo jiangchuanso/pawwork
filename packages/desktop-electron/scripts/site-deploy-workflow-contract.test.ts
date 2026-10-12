@@ -13,7 +13,7 @@ const workflow = load(
   }
   jobs: {
     "build-and-deploy": {
-      steps: Array<{ run?: string; uses?: string; if?: string; env?: Record<string, string> }>
+      steps: Array<{ id?: string; run?: string; uses?: string; if?: string; env?: Record<string, string> }>
     }
   }
 }
@@ -33,12 +33,17 @@ describe("site deploy workflow", () => {
     expect(deploy).toBeGreaterThan(install)
     expect(packageJson.devDependencies?.wrangler).toMatch(/^\d+\.\d+\.\d+$/)
     expect(steps[deploy]).toMatchObject({
-      if: "github.ref == 'refs/heads/main'",
+      if: "github.ref == 'refs/heads/main' && steps.cf-creds.outputs.has-creds == 'true'",
       env: {
         CLOUDFLARE_API_TOKEN: "${{ secrets.CLOUDFLARE_API_TOKEN }}",
         CLOUDFLARE_ACCOUNT_ID: "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}",
       },
     })
+
+    const preflight = steps.findIndex((step) => step.id === "cf-creds")
+    expect(preflight).toBeGreaterThanOrEqual(0)
+    expect(preflight).toBeLessThan(deploy)
+    expect(steps[preflight]).toMatchObject({ id: "cf-creds", if: "github.ref == 'refs/heads/main'" })
     expect(steps.some((step) => step.uses?.startsWith("cloudflare/wrangler-action@"))).toBe(false)
     expect(workflow.on.push.paths).toContain("package.json")
     expect(workflow.on.pull_request.paths).toContain("package.json")

@@ -22,7 +22,7 @@ const outputDir = path.resolve(import.meta.dirname, "../resources/runtime/primar
 const cacheDir = path.join(tmpdir(), "pawwork-primary-runtime-downloads")
 
 export function targetKey(platform: SupportedPlatform, arch: SupportedArch): TargetKey {
-  const key = `${platform === "win32" ? "win" : "mac"}-${arch}`
+  const key = `${platform === "win32" ? "win" : platform === "linux" ? "linux" : "mac"}-${arch}`
   if (!Object.hasOwn(lock.targets, key)) throw new Error(`Unsupported primary runtime target: ${platform}-${arch}`)
   return key as TargetKey
 }

@@ -1,8 +1,8 @@
 // Auto-publish the prod release once every target's assets and updater metadata
-// have landed in the draft, then dispatch the R2 mirror. Runs at the tail of
-// each finalize/full build, so the LAST target to complete flips the draft into
-// a published release. Fail-safe: missing targets leave the draft untouched;
-// only a complete, single-source release is ever published.
+// have landed in the draft. Runs at the tail of each finalize/full build, so the
+// LAST target to complete flips the draft into a published release. Fail-safe:
+// missing targets leave the draft untouched; only a complete, single-source
+// release is ever published.
 //
 // Why a dedicated script (not the by-tag verifier): a draft release is NOT
 // reachable via GET /releases/tags/{tag} (it 404s), so we look it up through the
@@ -38,7 +38,11 @@
 // publisher skips a published release), and finalize-latest-yml refuses to upload
 // to a non-draft release. Together a later same-version build from a different
 // commit cannot rewrite the published installers or their updater metadata; it
-// fails loudly instead.
+// fails loudly instead. The one exception is the explicit same-version re-publish
+// (PAWWORK_RELEASE_ALLOW_REPUBLISH): the build steps are then allowed to complete
+// a torn release in place, and this script finishes the job by clearing a
+// leftover prerelease flag. It still refuses to publish a mixed-source release,
+// and it never re-publishes a release that is merely already published.
 //
 // Residual: GitHub offers no atomic compare-and-swap across release assets, so
 // the finalize guard's draft-check and its upload, and this seal's re-read and
@@ -47,8 +51,8 @@
 // different commit, in two builds of the same version dispatched concurrently —
 // not reachable by the normal one-dispatch pipeline (each version is built once,
 // from one commit). Eliminating even that would need the commit in the asset
-// filenames (breaks the updater, the R2 mirror, and the website links) or a
-// single orchestrated workflow.
+// filenames (breaks the updater and the download links) or a single orchestrated
+// workflow.
 
 import {
   duplicateReleasesMessage,
@@ -63,6 +67,7 @@ import {
   type GithubRelease,
 } from "./verify-release"
 import { METADATA_FILES, type MetadataFile, releaseAssetName, releaseTarget } from "./release-targets"
+import { ALLOW_REPUBLISH_ENV, parseAllowRepublish } from "./release-republish-policy"
 
 const GITHUB_API = "https://api.github.com"
 const FETCH_TIMEOUT_MS = 30_000
@@ -90,7 +95,7 @@ export type ProvenanceMarker = { commit: string; sha512: string[] }
 
 export type PublishDecision =
   | { kind: "publish"; reason: string }
-  | { kind: "mirror-only"; reason: string }
+  | { kind: "already-published"; reason: string }
   | { kind: "wait"; reason: string }
   | { kind: "fail"; reason: string }
 
@@ -98,7 +103,10 @@ export type PublishDecision =
 // I/O so it is unit-testable without GitHub. `provenance` maps each PRESENT
 // marker asset name to its parsed marker; `expectedProvenance` is the full set
 // of marker names a complete release must carry; `updaterSha512s` is every
-// content hash currently in latest*.yml.
+// content hash currently in latest*.yml. `allowRepublish` is the explicit
+// same-version re-publish opt-in (PAWWORK_RELEASE_ALLOW_REPUBLISH): it is the
+// only thing that lets a prerelease flag be cleared, or assets be added to a
+// release that is already published.
 export function decidePublishAction(args: {
   release: GithubRelease
   metadata?: Partial<Record<MetadataFile, string>>
@@ -106,12 +114,15 @@ export function decidePublishAction(args: {
   provenance: Record<string, ProvenanceMarker>
   expectedProvenance: string[]
   updaterSha512s: string[]
+  allowRepublish: boolean
 }): PublishDecision {
-  const { release, metadata, buildSha, provenance, expectedProvenance, updaterSha512s } = args
+  const { release, metadata, buildSha, provenance, expectedProvenance, updaterSha512s, allowRepublish } = args
 
   // A prerelease is a bad state for this pipeline: fail loudly instead of
-  // waiting forever for a "completion" that publishing would never reach.
-  if (release.prerelease) {
+  // waiting forever for a "completion" that publishing would never reach. A
+  // re-publish of a release someone published as a prerelease by hand is the one
+  // case we may fix, and the opt-in is what says so.
+  if (release.prerelease && !allowRepublish) {
     return { kind: "fail", reason: `release ${release.tag_name} is marked as a prerelease` }
   }
 
@@ -130,8 +141,9 @@ export function decidePublishAction(args: {
   // Completeness: every installer + updater metadata (the verifier) AND every
   // per-target provenance marker must be present. Any gap means a target has not
   // finished yet -> keep waiting (no-op, exit 0). allowDraft so the draft state
-  // itself is not counted as a failure here.
-  const failures = verifyReleasePayload({ release, metadata }, { allowDraft: true })
+  // itself is not counted as a failure here; allowPrerelease so the flag we are
+  // about to clear does not read as an incomplete release.
+  const failures = verifyReleasePayload({ release, metadata }, { allowDraft: true, allowPrerelease: allowRepublish })
   const missingMarkers = expectedProvenance.filter((name) => !(name in provenance))
   if (failures.length > 0 || missingMarkers.length > 0) {
     const reasons = [...failures, ...missingMarkers.map((name) => `missing provenance marker ${name}`)]
@@ -165,10 +177,22 @@ export function decidePublishAction(args: {
     }
   }
 
-  // Already published by an earlier run. GITHUB_TOKEN publishes do not fire the
-  // release:published webhook, and an earlier mirror dispatch may have failed,
-  // so re-dispatch the (idempotent, per-tag serialized) mirror to avoid a gap.
-  return { kind: "mirror-only", reason: "release already published; ensuring the mirror is dispatched" }
+  // Already published by an earlier run. A re-publish opt-in still has one job
+  // left here: an explicit re-run of a release that was published as a
+  // prerelease (or published with the flag left on) has to come back as a normal
+  // release, so clear the flag with the same PATCH that a first publish uses.
+  // Without the opt-in a published release is frozen, and there is nothing to do.
+  if (release.prerelease) {
+    return {
+      kind: "publish",
+      reason: `release ${release.tag_name} is published but marked as a prerelease and ${ALLOW_REPUBLISH_ENV} is set; clearing the prerelease flag`,
+    }
+  }
+
+  return {
+    kind: "already-published",
+    reason: `release ${release.tag_name} is already published; leaving it as it is`,
+  }
 }
 
 function requireEnv(name: string): string {
@@ -317,9 +341,8 @@ function changedAssets(sealed: Map<string, string>, current: Map<string, string>
 }
 
 // Publish via the release id (draft-safe: the by-tag edit endpoints can fail to
-// resolve drafts), pinning the tag to the agreed build commit and marking it
-// latest. A GITHUB_TOKEN publish does not fire release:published, so the caller
-// still dispatches the mirror explicitly.
+// resolve drafts), pinning the tag to the agreed build commit, clearing a
+// leftover prerelease flag, and marking it latest.
 async function publishRelease(repo: string, release: ApiRelease, buildSha: string) {
   const res = await ghFetch(`${GITHUB_API}/repos/${repo}/releases/${release.id}`, {
     method: "PATCH",
@@ -328,20 +351,6 @@ async function publishRelease(repo: string, release: ApiRelease, buildSha: strin
     body: JSON.stringify({ draft: false, prerelease: false, make_latest: "true", target_commitish: buildSha }),
   })
   if (!res.ok) throw new Error(`failed to publish ${release.tag_name}: ${res.status} ${res.statusText}`)
-}
-
-async function gh(args: string[]) {
-  const { spawn } = await import("node:child_process")
-  const code = await new Promise<number | null>((resolve, reject) => {
-    const child = spawn("gh", args, { stdio: "inherit" })
-    child.once("error", reject)
-    child.once("exit", resolve)
-  })
-  if (code !== 0) throw new Error(`gh ${args.join(" ")} exited ${code}`)
-}
-
-async function dispatchMirror(repo: string, tag: string, ref: string) {
-  await gh(["workflow", "run", "mirror-release-to-r2.yml", "--repo", repo, "--ref", ref, "-f", `tag=${tag}`])
 }
 
 // Read THIS target's installer hash from its updater metadata, re-fetching to
@@ -378,7 +387,7 @@ async function main() {
   const buildSha = requireEnv("BUILD_SHA")
   const os = requireEnv("RELEASE_OS")
   const arch = requireEnv("RELEASE_ARCH")
-  const mirrorRef = requireEnv("MIRROR_REF")
+  const allowRepublish = parseAllowRepublish(process.env[ALLOW_REPUBLISH_ENV])
 
   const version = tag.replace(/^v/, "")
   const expectedProvenance = releaseProvenanceAssetNames(version)
@@ -408,6 +417,7 @@ async function main() {
       provenance: state.provenance,
       expectedProvenance,
       updaterSha512s: updaterSha512sFrom(state.metadata),
+      allowRepublish,
     })
     console.log(`publish-when-complete (attempt ${attempt}/${WAIT_POLL_ATTEMPTS}): ${decision.reason}`)
 
@@ -424,11 +434,17 @@ async function main() {
         // Exhausted the poll window still incomplete. Expected when other targets
         // are genuinely still building (each will run its own publisher). If every
         // target has in fact finished but this run only saw a stale view, the
-        // release is left a draft; re-dispatching the same version (same commit)
-        // re-runs against the still-draft release and publishes it.
+        // release is left incomplete; re-dispatching the same version (same commit)
+        // re-runs against it and publishes it.
         console.warn(
-          `publish-when-complete: still incomplete after ${WAIT_POLL_ATTEMPTS} attempts; leaving the release a draft (${decision.reason})`,
+          `publish-when-complete: still incomplete after ${WAIT_POLL_ATTEMPTS} attempts; leaving the release unpublished (${decision.reason})`,
         )
+        return
+      case "already-published":
+        // Nothing left to do: the release is live and (unless a re-publish opt-in
+        // asked us to clear a prerelease flag, which is the "publish" case above)
+        // it stays exactly as it is.
+        console.log(`publish-when-complete: ${decision.reason}`)
         return
       case "publish": {
         // Seal + re-read: snapshot the asset URLs, let any in-flight overwrite
@@ -445,14 +461,13 @@ async function main() {
           provenance: reread.provenance,
           expectedProvenance,
           updaterSha512s: updaterSha512sFrom(reread.metadata),
+          allowRepublish,
         })
         if (recheck.kind !== "publish") {
           console.error(`publish-when-complete: release changed during seal, not publishing: ${recheck.reason}`)
           if (recheck.kind === "fail") process.exit(1)
-          // Another job won the publish race during our seal window. Its publish
-          // does not fire release:published and its own mirror dispatch may have
-          // failed, so still ensure the mirror is dispatched before we exit.
-          if (recheck.kind === "mirror-only") await dispatchMirror(repo, tag, mirrorRef)
+          // Another job won the publish race during our seal window: it published
+          // (or cleared) the release, so there is nothing left for us to write.
           return
         }
         const moved = changedAssets(sealed, sealAssetUrls(reread.release, version))
@@ -463,12 +478,8 @@ async function main() {
           process.exit(1)
         }
         await publishRelease(repo, reread.release, buildSha)
-        await dispatchMirror(repo, tag, mirrorRef)
         return
       }
-      case "mirror-only":
-        await dispatchMirror(repo, tag, mirrorRef)
-        return
     }
   }
 }

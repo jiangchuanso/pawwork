@@ -27,6 +27,7 @@ on:
         options:
           - macos
           - windows
+          - linux
         default: macos
       arch:
         description: "Target architecture"
@@ -64,6 +65,14 @@ on:
         description: "Apple notarization submission ID"
         required: false
         type: string
+      allow_republish:
+        description: "Allow re-uploading artifacts and updater metadata into an already-published release (re-run of a failed/torn release). Explicit opt-in; off by default so a normal run stays fail-closed."
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
 
 # Release metadata is a read-modify-write upload to the same latest*.yml asset.
 # Queue same target/phase runs across arch to avoid release asset clobbering.
@@ -74,8 +83,96 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Targets a release ships WITHOUT, as "<os>-<arch>" keys. macOS is dropped
+  # until the Apple Developer ID signing certificate (CSC_LINK) and notarization
+  # credentials exist: the orchestrator skips those builds, and the publisher /
+  # verifier stop expecting macOS assets (otherwise
+  # publish-when-complete waits forever for a target that can never arrive and
+  # the draft never publishes). Clear this value to restore a full
+  # macOS + Windows + Linux release.
+  PAWWORK_RELEASE_EXCLUDE_TARGETS: mac-arm64,mac-x64
+
 jobs:
+  # On a version tag push, fan out one `full` run per target/arch by
+  # re-dispatching this same workflow (the proven per-target release path).
+  # `full` is the only phase that publishes Windows/Linux: `submit` builds with
+  # --publish never, leaving the installers as CI artifacts and skipping the
+  # updater-metadata finalization. (macOS instead needs submit -> finalize,
+  # because Apple notarization is asynchronous.)
+  # macOS is skipped while PAWWORK_RELEASE_EXCLUDE_TARGETS drops it — it cannot
+  # be built without the Apple signing certificate. Restore macOS by clearing
+  # that env var and adding the two macOS entries back below.
+  release-orchestrator:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Verify tag matches package version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(gh api "repos/${{ github.repository }}/contents/packages/desktop-electron/package.json" \
+            --jq '.content' | base64 -d | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).version))')"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME points at version $tag but packages/desktop-electron/package.json is $version. Bump the version before tagging."
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches package version $version"
+
+      # A tag push for a version whose release is ALREADY PUBLISHED is not a first
+      # release: it is a same-version re-run that has to complete (or repair) a
+      # release which is already live — the case the build jobs otherwise refuse,
+      # because a later build from another commit must never rewrite a published
+      # release. Re-pushing the tag IS the explicit statement that this version is
+      # being re-published, so the orchestrator forwards that opt-in instead of
+      # making it a manual dispatch; a fresh version finds no release and stays
+      # fail-closed.
+      - name: Detect an already-published release
+        id: release_state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # `releases/tags/<tag>` 404s for a missing release and for a draft, and
+          # both of those are the normal first-release path.
+          state="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.draft' 2>/dev/null || echo missing)"
+          allow_republish=false
+          if [ "$state" = "false" ]; then
+            allow_republish=true
+            echo "::notice title=Re-publishing $TAG::Release $TAG is already published; dispatching with allow_republish=true so the build jobs may complete it in place."
+          fi
+          echo "allow-republish=$allow_republish" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch per-target release builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          ALLOW_REPUBLISH: ${{ steps.release_state.outputs.allow-republish }}
+        run: |
+          set -euo pipefail
+          targets=(
+            "windows x64"
+            "linux arm64"
+          )
+          for t in "${targets[@]}"; do
+            set -- $t
+            target="$1"; arch="$2"
+            echo "Dispatching full build for $target/$arch (allow_republish=$ALLOW_REPUBLISH)"
+            gh workflow run build.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" \
+              -f phase=full -f channel=prod -f target="$target" -f arch="$arch" \
+              -f allow_republish="$ALLOW_REPUBLISH"
+          done
+          echo "::notice::Tag push dispatched full builds for the configured targets. macOS is excluded via PAWWORK_RELEASE_EXCLUDE_TARGETS (no Apple signing certificate); clear it to restore macOS releases."
+
   select-build-target:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
@@ -91,7 +188,7 @@ jobs:
               echo "Finalize source must be $EXPECTED_SOURCE_REF, got ${SOURCE_REF:-<empty>}"
               exit 1
             fi
-          elif [ "$GITHUB_REF" != "refs/heads/$EXPECTED_SOURCE_REF" ]; then
+          elif [ "$GITHUB_REF" != "refs/heads/$EXPECTED_SOURCE_REF" ] && [[ "$GITHUB_REF" != refs/tags/* ]]; then
             echo "Releases must start from $EXPECTED_SOURCE_REF, got $GITHUB_REF"
             exit 1
           fi
@@ -136,6 +233,18 @@ jobs:
               fi
               host="windows-latest"
               platform_flag="--win"
+              ;;
+            linux)
+              if [ "$phase" = "finalize" ]; then
+                echo "Linux releases do not use the macOS notarization finalize phase"
+                exit 1
+              fi
+              if [ "$arch" != "arm64" ]; then
+                echo "Unsupported Linux arch: $arch"
+                exit 1
+              fi
+              host="ubuntu-24.04-arm"
+              platform_flag="--linux --arm64"
               ;;
             *)
               echo "Unsupported release target: $target"
@@ -204,11 +313,20 @@ jobs:
 
     runs-on: ${{ matrix.host }}
     permissions:
-      # actions: write lets the prod publish step dispatch mirror-release-to-r2.yml
-      # via `gh workflow run` (workflow_dispatch is the GITHUB_TOKEN anti-recursion
-      # exception; a GITHUB_TOKEN-driven publish does NOT fire release:published).
-      actions: write
+      # contents: write uploads the installers and the updater metadata into the
+      # release; publishing from here is a plain PATCH. actions: read is what the
+      # macOS finalize phase needs to pull the signed app artifact out of the
+      # submit run with `gh run download`. Nothing here dispatches a workflow any
+      # more, so no write scope beyond contents.
+      actions: read
       contents: write
+
+    env:
+      # Opt-in switch for re-running a release whose draft was already published
+      # by an earlier run (or a torn release). Off by default; when set, the
+      # finalize step re-uploads updater metadata into the live release and the
+      # "Republish installer artifacts" step re-uploads the installers.
+      PAWWORK_RELEASE_ALLOW_REPUBLISH: ${{ inputs.allow_republish }}
 
     steps:
       - name: Validate selected target
@@ -295,6 +413,7 @@ jobs:
           case "${{ matrix.target }}" in
             macos) uv_platform="darwin" ;;
             windows) uv_platform="win32" ;;
+            linux) uv_platform="linux" ;;
             *) echo "Unsupported uv target: ${{ matrix.target }}"; exit 1 ;;
           esac
 
@@ -334,7 +453,7 @@ jobs:
 
       - name: Download existing updater metadata
         # macOS finalize can run after notarization as a separate phase; Windows finalizes during full packaging.
-        if: ${{ inputs.channel != 'dev' && ((runner.os == 'macOS' && (inputs.phase == 'finalize' || inputs.phase == 'full') && inputs.arch == matrix.arch_label) || (runner.os == 'Windows' && inputs.phase == 'full')) }}
+        if: ${{ inputs.channel != 'dev' && ((runner.os == 'macOS' && (inputs.phase == 'finalize' || inputs.phase == 'full') && inputs.arch == matrix.arch_label) || ((runner.os == 'Windows' || runner.os == 'Linux') && inputs.phase == 'full')) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -649,7 +768,7 @@ jobs:
       # a tag can produce two drafts and split its assets between them. Claim the
       # single draft here, before any upload, and fail fast on a split.
       - name: Ensure a single release draft
-        if: ${{ inputs.channel != 'dev' && ((runner.os == 'macOS' && (inputs.phase == 'finalize' || inputs.phase == 'full') && inputs.arch == matrix.arch_label) || (runner.os == 'Windows' && inputs.phase == 'full')) }}
+        if: ${{ inputs.channel != 'dev' && ((runner.os == 'macOS' && (inputs.phase == 'finalize' || inputs.phase == 'full') && inputs.arch == matrix.arch_label) || ((runner.os == 'Windows' || runner.os == 'Linux') && inputs.phase == 'full')) }}
         run: pnpm exec tsx ./scripts/ensure-release-draft.ts
         working-directory: packages/desktop-electron
         env:
@@ -852,8 +971,44 @@ jobs:
             packages/desktop-electron/dist/*.exe.blockmap
             packages/desktop-electron/dist/latest*.yml
 
+      - name: Upload packaged app artifact
+        if: ${{ runner.os == 'Linux' && inputs.phase != 'finalize' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pawwork-${{ runner.os }}-${{ matrix.arch_label }}
+          if-no-files-found: error
+          path: |
+            packages/desktop-electron/dist/*.deb
+            packages/desktop-electron/dist/latest*.yml
+
+      - name: Republish installer artifacts
+        # When re-running a release whose draft was already published by an
+        # earlier run, electron-builder's draft-only publisher SKIPS uploading to
+        # an already-published release. This step re-uploads the built installers
+        # (and their blockmaps) directly with `gh release upload --clobber`. It is
+        # gated on the explicit opt-in and only fires in a publishing phase, so a
+        # normal run is untouched. The updater metadata (.yml) is owned by the
+        # Finalize step and is deliberately excluded here.
+        if: ${{ inputs.allow_republish && inputs.channel != 'dev' && inputs.phase != 'submit' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="v${{ steps.package_version.outputs.version }}"
+          shopt -s nullglob
+          files=(dist/pawwork-*.deb dist/pawwork-*.exe dist/pawwork-*.exe.blockmap dist/pawwork-*.dmg dist/pawwork-*.zip)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::PAWWORK_RELEASE_ALLOW_REPUBLISH is set but no installer artifacts were found in dist/; nothing to republish"
+            exit 1
+          fi
+          echo "Republishing ${#files[@]} installer artifact(s) into ${tag}"
+          gh release upload "$tag" --clobber --repo "$PUBLISH_OWNER/$PUBLISH_REPO" "${files[@]}"
+        working-directory: packages/desktop-electron
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Collect updater metadata
-        if: ${{ inputs.channel != 'dev' && ((runner.os == 'macOS' && (inputs.phase == 'finalize' || inputs.phase == 'full') && inputs.arch == matrix.arch_label) || (runner.os == 'Windows' && inputs.phase == 'full')) }}
+        if: ${{ inputs.channel != 'dev' && ((runner.os == 'macOS' && (inputs.phase == 'finalize' || inputs.phase == 'full') && inputs.arch == matrix.arch_label) || ((runner.os == 'Windows' || runner.os == 'Linux') && inputs.phase == 'full')) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -864,7 +1019,7 @@ jobs:
         working-directory: packages/desktop-electron
 
       - name: Finalize updater metadata
-        if: ${{ inputs.channel != 'dev' && ((runner.os == 'macOS' && (inputs.phase == 'finalize' || inputs.phase == 'full') && inputs.arch == matrix.arch_label) || (runner.os == 'Windows' && inputs.phase == 'full')) }}
+        if: ${{ inputs.channel != 'dev' && ((runner.os == 'macOS' && (inputs.phase == 'finalize' || inputs.phase == 'full') && inputs.arch == matrix.arch_label) || ((runner.os == 'Windows' || runner.os == 'Linux') && inputs.phase == 'full')) }}
         run: pnpm exec tsx ./scripts/finalize-latest-yml.ts
         working-directory: packages/desktop-electron
         env:
@@ -873,18 +1028,28 @@ jobs:
           EXISTING_LATEST_YML_DIR: ${{ runner.temp }}/existing-latest-yml
           LATEST_YML_DIR: ${{ runner.temp }}/latest-yml
           OPENCODE_VERSION: ${{ steps.package_version.outputs.version }}
+          # Provenance inputs for the same-source guard when re-publishing into an
+          # already-published release (PAWWORK_RELEASE_ALLOW_REPUBLISH).
+          BUILD_SHA: ${{ inputs.phase == 'finalize' && inputs.source_sha || github.sha }}
+          RELEASE_OS: ${{ runner.os == 'macOS' && 'mac' || runner.os == 'Linux' && 'linux' || 'win' }}
+          RELEASE_ARCH: ${{ matrix.arch_label }}
 
       # Runs at the tail of every prod finalize/full target, after its updater
       # metadata lands in the draft. Publishes (and pins the tag to the build
-      # commit) only when ALL targets are present, then dispatches the R2 mirror;
-      # incomplete drafts are a no-op. The LAST target to finish flips the draft.
+      # commit) only when ALL targets are present; incomplete drafts are a no-op.
+      # The LAST target to finish flips the draft.
       - name: Publish release when all targets are complete
-        if: ${{ inputs.channel == 'prod' && ((runner.os == 'macOS' && (inputs.phase == 'finalize' || inputs.phase == 'full') && inputs.arch == matrix.arch_label) || (runner.os == 'Windows' && inputs.phase == 'full')) }}
+        if: ${{ inputs.channel == 'prod' && ((runner.os == 'macOS' && (inputs.phase == 'finalize' || inputs.phase == 'full') && inputs.arch == matrix.arch_label) || ((runner.os == 'Windows' || runner.os == 'Linux') && inputs.phase == 'full')) }}
         run: pnpm exec tsx ./scripts/publish-when-complete.ts
         working-directory: packages/desktop-electron
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+          # Same repository as the draft claim and the metadata finalizer: one
+          # notion of "the release this build publishes to", so a fork that
+          # points PAWWORK_RELEASE_OWNER elsewhere cannot end up publishing into
+          # one repository while reading another (github.repository is the fork
+          # that happens to be running the workflow).
+          GH_REPO: ${{ env.PUBLISH_OWNER }}/${{ env.PUBLISH_REPO }}
           RELEASE_TAG: v${{ steps.package_version.outputs.version }}
           # The commit the assets were actually built from: finalize repackages
           # the submit build checked out at source_sha (see the finalize checkout
@@ -893,9 +1058,8 @@ jobs:
           # with what it actually built.
           BUILD_SHA: ${{ inputs.phase == 'finalize' && inputs.source_sha || github.sha }}
           # Identify this target so it can upload its own provenance marker.
-          RELEASE_OS: ${{ runner.os == 'macOS' && 'mac' || 'win' }}
+          RELEASE_OS: ${{ runner.os == 'macOS' && 'mac' || runner.os == 'Linux' && 'linux' || 'win' }}
           RELEASE_ARCH: ${{ matrix.arch_label }}
-          MIRROR_REF: main
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: ${{ runner.os == 'macOS' && (inputs.phase == 'finalize' || inputs.phase == 'full') && inputs.arch == matrix.arch_label }}

@@ -21,8 +21,10 @@ const completeRelease: GithubRelease = {
     "pawwork-mac-x64-2026.6.1.zip.blockmap",
     "pawwork-win-x64-2026.6.1.exe",
     "pawwork-win-x64-2026.6.1.exe.blockmap",
+    "pawwork-linux-arm64-2026.6.1.deb",
     "latest-v2.yml",
     "latest-v2-mac.yml",
+    "latest-v2-linux-arm64.yml",
   ].map((name) => ({ name, url: `https://api.example.com/assets/${name}`, browser_download_url: `https://example.com/${name}` })),
 }
 
@@ -30,6 +32,7 @@ const metadata = {
   "latest-v2.yml": "version: 2026.6.1\nfiles:\n  - url: pawwork-win-x64-2026.6.1.exe\n",
   "latest-v2-mac.yml":
     "version: 2026.6.1\nfiles:\n  - url: pawwork-mac-arm64-2026.6.1.zip\n  - url: pawwork-mac-x64-2026.6.1.zip\n",
+  "latest-v2-linux-arm64.yml": "version: 2026.6.1\nfiles:\n  - url: pawwork-linux-arm64-2026.6.1.deb\n",
 }
 
 const expectedProvenance = releaseProvenanceAssetNames("2026.6.1")
@@ -50,6 +53,7 @@ const decide = (overrides: Partial<Parameters<typeof decidePublishAction>[0]> = 
     provenance: allAgree,
     expectedProvenance,
     updaterSha512s,
+    allowRepublish: false,
     ...overrides,
   })
 
@@ -59,6 +63,7 @@ describe("releaseProvenanceAssetNames", () => {
       "pawwork-mac-arm64-2026.6.1.commit",
       "pawwork-mac-x64-2026.6.1.commit",
       "pawwork-win-x64-2026.6.1.commit",
+      "pawwork-linux-arm64-2026.6.1.commit",
     ])
   })
 })
@@ -89,14 +94,45 @@ describe("decidePublishAction", () => {
     expect(decision.reason).toContain("pawwork-win-x64-2026.6.1.commit")
   })
 
-  test("only mirrors when the release is already published (no re-publish)", () => {
-    expect(decide({ release: { ...completeRelease, draft: false } }).kind).toBe("mirror-only")
+  test("does nothing when the release is already published (no re-publish)", () => {
+    const decision = decide({ release: { ...completeRelease, draft: false } })
+    expect(decision.kind).toBe("already-published")
+    expect(decision.reason).toContain("already published")
   })
 
   test("fails loudly on a prerelease instead of waiting forever", () => {
     const decision = decide({ release: { ...completeRelease, prerelease: true } })
     expect(decision.kind).toBe("fail")
     expect(decision.reason).toContain("prerelease")
+  })
+
+  // Re-running a version someone published by hand as a prerelease (or published
+  // with the flag left on) is the case a re-publish exists for: the flag has to
+  // come off, which is the same PATCH a first publish does.
+  test("clears a leftover prerelease flag only under the republish opt-in", () => {
+    const published: GithubRelease = { ...completeRelease, draft: false, prerelease: true }
+    const decision = decide({ release: published, allowRepublish: true })
+    expect(decision.kind).toBe("publish")
+    expect(decision.reason).toContain("clearing the prerelease flag")
+  })
+
+  test("publishes a prerelease draft under the republish opt-in", () => {
+    // A release can be both a draft and flagged prerelease; the completeness and
+    // provenance gates still have to pass, and the flag must not read as
+    // "incomplete" while we are on our way to clearing it.
+    expect(decide({ release: { ...completeRelease, prerelease: true }, allowRepublish: true }).kind).toBe("publish")
+  })
+
+  test("keeps the fail-closed gates under the republish opt-in", () => {
+    const published: GithubRelease = { ...completeRelease, draft: false, prerelease: true }
+    expect(decide({ release: published, allowRepublish: true, provenance: { ...allAgree, "pawwork-win-x64-2026.6.1.commit": { commit: OTHER_SHA, sha512: ["sha-win"] } } }).kind).toBe(
+      "fail",
+    )
+    const partial: GithubRelease = {
+      ...published,
+      assets: published.assets.filter((asset) => asset.name !== "pawwork-linux-arm64-2026.6.1.deb"),
+    }
+    expect(decide({ release: partial, allowRepublish: true }).kind).toBe("wait")
   })
 
   test("refuses to publish when a marker disagrees on the build commit", () => {

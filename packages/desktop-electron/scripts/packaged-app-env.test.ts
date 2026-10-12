@@ -31,7 +31,7 @@ describe("packaged app locations", () => {
 
   test("refuses a channel, platform or arch it does not package", () => {
     expect(() => packagedAppEnv("nightly", "darwin", "arm64")).toThrow("Unsupported channel: nightly")
-    expect(() => packagedAppEnv("prod", "linux", "x64")).toThrow("Unsupported platform: linux")
+    expect(() => packagedAppEnv("prod", "linux", "x64")).toThrow("Unsupported arch: x64")
     expect(() => packagedAppEnv("prod", "darwin", "ia32")).toThrow("Unsupported arch: ia32")
   })
 

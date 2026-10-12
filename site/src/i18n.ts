@@ -23,6 +23,8 @@ export const I18N: Record<Lang, Dict> = {
     "dl.intel.s": "Intel",
     "dl.win.t": "Windows",
     "dl.win.s": "x64",
+    "dl.linux.t": "Download for Linux",
+    "dl.linux.s": "arm64 (.deb)",
     gh2: "On GitHub? <u>Grab the latest release</u>",
     wnote:
       '<b>Windows:</b> If SmartScreen shows a warning on first launch, click "More info", then "Run anyway". The macOS build is signed and notarized — just open and go.',
@@ -81,6 +83,7 @@ export const I18N: Record<Lang, Dict> = {
     "g.sub": "<b>Free and open-source.</b> Download for macOS or Windows and start in minutes.",
     "g.mac": "<b>macOS</b> — Apple Silicon and Intel, signed and notarized.",
     "g.win": "<b>Windows</b> — x64, currently unsigned installer, so SmartScreen may appear on first launch.",
+    "g.linux": "<b>Linux</b> — arm64 (.deb), install with your system package manager.",
     "g.privacy":
       "<b>Your files stay on your machine.</b> You choose the workspace, review every action before it runs, and the code is open-source and auditable.",
     "f.readme": "README",
@@ -100,6 +103,8 @@ export const I18N: Record<Lang, Dict> = {
     "dl.intel.s": "Intel",
     "dl.win.t": "Windows",
     "dl.win.s": "x64",
+    "dl.linux.t": "下载 Linux 版",
+    "dl.linux.s": "arm64（.deb）",
     gh2: "有 GitHub？<u>去 Releases 下载最新版</u>",
     wnote:
       "<b>Windows 用户</b>首次打开时如果弹出 SmartScreen 提示，点「更多信息」，再点「仍要运行」。macOS 版已签名公证，不会出现此提示。",
@@ -158,6 +163,7 @@ export const I18N: Record<Lang, Dict> = {
     "g.sub": "<b>免费、开源。</b>下载 macOS 或 Windows 版，几分钟就能上手。",
     "g.mac": "<b>macOS</b>，支持 Apple 芯片与 Intel，已签名公证。",
     "g.win": "<b>Windows</b>，x64，当前为未签名安装包，首次打开可能弹出 SmartScreen。",
+    "g.linux": "<b>Linux</b>，arm64（.deb），用系统包管理器安装。",
     "g.privacy": "<b>文件留在你电脑上。</b>工作目录你选，每个动作执行前你都能审，代码开源、可审计。",
     "f.readme": "说明文档",
     foot: "Apache-2.0，由 DeepSeek DSH 驱动",

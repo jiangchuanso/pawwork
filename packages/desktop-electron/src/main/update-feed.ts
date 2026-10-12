@@ -1,10 +1,12 @@
 // Runtime feed selection for the in-app updater (#219).
 //
-// PawWork mirrors every prod release to Cloudflare R2 (dl.pawwork.ai), which is
-// fast and reachable from mainland China; GitHub is the global fallback. The
-// baked app-update.yml stays `provider: github` (CI verifies that and it is the
-// safest default); this module overrides the provider at runtime so each check
-// prefers R2 and falls back to GitHub.
+// The module takes an ordered list of feeds and runs the first reachable one:
+// a generic (mirror) feed first and GitHub as the global fallback, which is how
+// the upstream project serves mainland China. THIS fork wires GitHub only — it
+// has no mirror of its own, and pointing at someone else's mirror would update
+// the app from a release its own repository did not publish. The baked
+// app-update.yml stays `provider: github` (CI verifies that and it is the safest
+// default); this module overrides the provider at runtime.
 //
 // Feed selection uses a CANCELLABLE reachability probe (HEAD on the channel
 // file, aborted on timeout) to pick the primary feed, then runs a SEQUENTIAL
@@ -20,9 +22,12 @@
 // 60 s socket timeout; this module does not add its own check-level timeout
 // because we cannot cancel an in-flight checkForUpdates().
 //
-// R2 serves byte-identical assets and the same latest*.yml as the GitHub
-// release (see mirror-release-to-r2.ts), so the sha512 verification chain holds
-// regardless of which feed wins.
+// A mirror is expected to serve byte-identical assets and the same latest*.yml
+// as the release it mirrors, so the sha512 verification chain holds regardless of
+// which feed wins.
+//
+// Label names ("r2" / "github") are historical: they name the primary-mirror and
+// GitHub slots of the feed list, not a particular provider.
 
 export type FeedLabel = "r2" | "github"
 
@@ -38,7 +43,8 @@ export type UpdateCheck = {
 } | null
 
 type Deps = {
-  // Ordered by preference: primary first (R2), fallback last (GitHub).
+  // Ordered by preference: primary first, fallback last. The probe/fallback
+  // machinery only engages when more than one feed is wired.
   feeds: FeedTarget[]
   setFeedURL: (options: FeedOptions) => void
   checkForUpdates: () => Promise<UpdateCheck>

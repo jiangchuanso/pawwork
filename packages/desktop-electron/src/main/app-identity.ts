@@ -3,7 +3,12 @@ export const PAWWORK_APP = {
   prod: { id: "ai.pawwork.desktop", name: "PawWork", releaseRepo: "pawwork" },
 } as const
 
-export const PAWWORK_RELEASE_OWNER = "Astro-Han"
+// This fork releases and updates from its own repository. Everything that names
+// the release repository derives from here — the packaged updater config, the
+// publish target electron-builder uploads to, the release verifier's default
+// repo, and the CI release metadata finalizer — so a fork only has to change
+// this one string to become its own release channel.
+export const PAWWORK_RELEASE_OWNER = "jiangchuanso"
 export const PAWWORK_UPDATE_CHANNEL = "latest-v2"
 
 export type PawWorkChannel = keyof typeof PAWWORK_APP

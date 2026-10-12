@@ -2,6 +2,17 @@
 
 Use this checklist for PawWork desktop releases.
 
+> **Fork note (`jiangchuanso/pawwork`).** This fork ships Windows x64 and Linux
+> arm64 only, and a `v*` tag push is the whole trigger: `release-orchestrator` in
+> `build.yml` dispatches one `full` build per target, and each build's tail
+> (metadata finalize + auto-publish) completes the release. Re-pushing the tag of
+> an already-published version is the supported way to complete or repair it —
+> the orchestrator detects the live release and passes `allow_republish=true`
+> down to the builds. macOS steps here are upstream's and do not apply: macOS is
+> excluded via `PAWWORK_RELEASE_EXCLUDE_TARGETS` because this fork has no Apple
+> signing certificate. There is no Cloudflare R2 mirror either — GitHub Releases
+> is the only download source, and the in-app updater reads that release.
+
 ## 1. Prepare
 
 - Confirm the release PR targets `main` and all required CI checks are green.
@@ -18,7 +29,7 @@ git pull --ff-only
 ```bash
 git fetch origin --tags
 git tag -l vX.Y.Z
-gh release view vX.Y.Z --repo Astro-Han/pawwork
+gh release view vX.Y.Z --repo jiangchuanso/pawwork
 ```
 
 ## 2. Draft Release Notes Before Publishing
@@ -28,9 +39,9 @@ Create or update the GitHub Release body before publishing the release. Use Engl
 ```md
 ## Downloads
 
-- [macOS Apple Silicon](https://github.com/Astro-Han/pawwork/releases/download/vX.Y.Z/pawwork-mac-arm64-X.Y.Z.dmg)
-- [macOS Intel](https://github.com/Astro-Han/pawwork/releases/download/vX.Y.Z/pawwork-mac-x64-X.Y.Z.dmg)
-- [Windows](https://github.com/Astro-Han/pawwork/releases/download/vX.Y.Z/pawwork-win-x64-X.Y.Z.exe)
+- [macOS Apple Silicon](https://github.com/jiangchuanso/pawwork/releases/download/vX.Y.Z/pawwork-mac-arm64-X.Y.Z.dmg)
+- [macOS Intel](https://github.com/jiangchuanso/pawwork/releases/download/vX.Y.Z/pawwork-mac-x64-X.Y.Z.dmg)
+- [Windows](https://github.com/jiangchuanso/pawwork/releases/download/vX.Y.Z/pawwork-win-x64-X.Y.Z.exe)
 
 ## App Update Notice
 
@@ -55,9 +66,9 @@ Create or update the GitHub Release body before publishing the release. Use Engl
 
 ### 下载
 
-- [macOS Apple 芯片](https://github.com/Astro-Han/pawwork/releases/download/vX.Y.Z/pawwork-mac-arm64-X.Y.Z.dmg)
-- [macOS Intel 芯片](https://github.com/Astro-Han/pawwork/releases/download/vX.Y.Z/pawwork-mac-x64-X.Y.Z.dmg)
-- [Windows](https://github.com/Astro-Han/pawwork/releases/download/vX.Y.Z/pawwork-win-x64-X.Y.Z.exe)
+- [macOS Apple 芯片](https://github.com/jiangchuanso/pawwork/releases/download/vX.Y.Z/pawwork-mac-arm64-X.Y.Z.dmg)
+- [macOS Intel 芯片](https://github.com/jiangchuanso/pawwork/releases/download/vX.Y.Z/pawwork-mac-x64-X.Y.Z.dmg)
+- [Windows](https://github.com/jiangchuanso/pawwork/releases/download/vX.Y.Z/pawwork-win-x64-X.Y.Z.exe)
 
 ### 主要更新
 
@@ -71,8 +82,8 @@ Do not rely on the GitHub Assets list as the primary download UI. It mixes user 
 Submit macOS notarization for both architectures:
 
 ```bash
-gh workflow run build.yml --repo Astro-Han/pawwork --ref main -f phase=submit -f channel=prod -f target=macos -f arch=arm64
-gh workflow run build.yml --repo Astro-Han/pawwork --ref main -f phase=submit -f channel=prod -f target=macos -f arch=x64
+gh workflow run build.yml --repo jiangchuanso/pawwork --ref main -f phase=submit -f channel=prod -f target=macos -f arch=arm64
+gh workflow run build.yml --repo jiangchuanso/pawwork --ref main -f phase=submit -f channel=prod -f target=macos -f arch=x64
 ```
 
 Record each submit run's source run ID, source run attempt, source ref, source sha, workflow ref, workflow sha, and Apple submission ID from the workflow summary.
@@ -94,26 +105,26 @@ Finalize each macOS architecture with the exact command emitted by its submit wo
 For arm64, replace `ARM64_SOURCE_RUN_ID` with the `source_run_id` value from the arm64 submit summary, and apply the same mapping for the other `ARM64_` placeholders. Repeat with the x64 submit summary for the `X64_` placeholders.
 
 ```bash
-gh workflow run build.yml --repo Astro-Han/pawwork --ref ARM64_SOURCE_WORKFLOW_REF -f phase=finalize -f channel=prod -f arch=arm64 -f source_run_id=ARM64_SOURCE_RUN_ID -f source_run_attempt=ARM64_SOURCE_RUN_ATTEMPT -f source_ref=ARM64_SOURCE_REF -f source_sha=ARM64_SOURCE_SHA -f source_workflow_ref=ARM64_SOURCE_WORKFLOW_REF -f source_workflow_sha=ARM64_SOURCE_WORKFLOW_SHA -f submission_id=ARM64_SUBMISSION_ID
-gh workflow run build.yml --repo Astro-Han/pawwork --ref X64_SOURCE_WORKFLOW_REF -f phase=finalize -f channel=prod -f arch=x64 -f source_run_id=X64_SOURCE_RUN_ID -f source_run_attempt=X64_SOURCE_RUN_ATTEMPT -f source_ref=X64_SOURCE_REF -f source_sha=X64_SOURCE_SHA -f source_workflow_ref=X64_SOURCE_WORKFLOW_REF -f source_workflow_sha=X64_SOURCE_WORKFLOW_SHA -f submission_id=X64_SUBMISSION_ID
+gh workflow run build.yml --repo jiangchuanso/pawwork --ref ARM64_SOURCE_WORKFLOW_REF -f phase=finalize -f channel=prod -f arch=arm64 -f source_run_id=ARM64_SOURCE_RUN_ID -f source_run_attempt=ARM64_SOURCE_RUN_ATTEMPT -f source_ref=ARM64_SOURCE_REF -f source_sha=ARM64_SOURCE_SHA -f source_workflow_ref=ARM64_SOURCE_WORKFLOW_REF -f source_workflow_sha=ARM64_SOURCE_WORKFLOW_SHA -f submission_id=ARM64_SUBMISSION_ID
+gh workflow run build.yml --repo jiangchuanso/pawwork --ref X64_SOURCE_WORKFLOW_REF -f phase=finalize -f channel=prod -f arch=x64 -f source_run_id=X64_SOURCE_RUN_ID -f source_run_attempt=X64_SOURCE_RUN_ATTEMPT -f source_ref=X64_SOURCE_REF -f source_sha=X64_SOURCE_SHA -f source_workflow_ref=X64_SOURCE_WORKFLOW_REF -f source_workflow_sha=X64_SOURCE_WORKFLOW_SHA -f submission_id=X64_SUBMISSION_ID
 ```
 
 Build and publish the Windows installer:
 
 ```bash
-gh workflow run build.yml --repo Astro-Han/pawwork --ref main -f phase=full -f channel=prod -f target=windows -f arch=x64
+gh workflow run build.yml --repo jiangchuanso/pawwork --ref main -f phase=full -f channel=prod -f target=windows -f arch=x64
 ```
 
 > **All three final targets must be the same build commit.** mac finalize rebuilds from the commit pinned by its submit snapshot tag (`source_sha`), while the Windows `full` build uses the current `main` HEAD (`github.sha`). If `main` moves between the macOS submits and the Windows build, the targets disagree and the auto-publisher (Step 4) refuses to publish — by design. Freeze `main` for the duration of the release, or confirm the Windows build's commit matches the macOS `source_sha` before expecting auto-publish to fire.
 
 ## 4. Publish
 
-**A prod release publishes itself (PR #1119).** The tail `publish-when-complete` step of the last target's finalize/full build flips the draft to published — pinning the tag to the build commit and marking it latest — then dispatches the R2 mirror. It only does so once every target's installers and updater metadata are present AND all targets agree on a single build commit. So for a normal prod release you do **not** run `gh release edit` by hand; you confirm the auto-publish outcome.
+**A prod release publishes itself (PR #1119).** The tail `publish-when-complete` step of the last target's finalize/full build flips the draft to published — pinning the tag to the build commit and marking it latest. It only does so once every target's installers and updater metadata are present AND all targets agree on a single build commit. So for a normal prod release you do **not** run `gh release edit` by hand; you confirm the auto-publish outcome.
 
 Check the "Publish release when all targets are complete" step in the last build run, then the release state:
 
 ```bash
-gh release view vX.Y.Z --repo Astro-Han/pawwork --json isDraft,isPrerelease,targetCommitish,assets,url
+gh release view vX.Y.Z --repo jiangchuanso/pawwork --json isDraft,isPrerelease,targetCommitish,assets,url
 ```
 
 - **Published** (`isDraft: false`, `targetCommitish` = the build commit) → done, go to Step 6.
@@ -124,31 +135,21 @@ Manual publish is a **last resort** for recovering a release the pipeline genuin
 
 ```bash
 # LAST RESORT — bypasses the auto-publisher's safety checks.
-gh release edit vX.Y.Z --repo Astro-Han/pawwork --draft=false --latest --prerelease=false --target <build-commit-sha>
+gh release edit vX.Y.Z --repo jiangchuanso/pawwork --draft=false --latest --prerelease=false --target <build-commit-sha>
 ```
 
 Never publish a dev build as `--latest --prerelease=false`, and never hand-publish a partial draft.
 
-## 5. Mirror Downloads to Cloudflare R2
+## 5. Downloads
 
-The China-accessible landing page (dl.pawwork.ai) serves downloads from the R2 mirror, not GitHub. The mirror is gated by `verify-release` and only runs against a published (non-draft) release, so it runs after the release is published in Step 4.
+This fork has **no** download mirror: `.github/workflows/mirror-release-to-r2.yml`
+and `scripts/mirror-release-to-r2.ts` were removed, so nothing is uploaded to the
+upstream project's Cloudflare R2 bucket (dl.pawwork.ai).
 
-On the normal path the auto-publisher (Step 4) dispatches `.github/workflows/mirror-release-to-r2.yml` itself, immediately after publishing: a release published with the built-in `GITHUB_TOKEN` does NOT emit a `release: published` event, so the auto-publisher triggers the mirror explicitly. (A manual last-resort publish with your own credentials *does* emit `release: published`, which also triggers the mirror.) Either way, confirm a run started, and dispatch it manually if none did:
-
-```bash
-gh run list --workflow mirror-release-to-r2.yml --repo Astro-Han/pawwork --limit 3
-# If no run was triggered for this tag, dispatch it manually:
-gh workflow run mirror-release-to-r2.yml --repo Astro-Han/pawwork --ref main -f tag=vX.Y.Z
-```
-
-Then confirm the landing page points at the new version on R2:
-
-```bash
-curl -fsSL https://dl.pawwork.ai/latest.json            # "version" should read X.Y.Z
-curl -fsI https://dl.pawwork.ai/pawwork-mac-arm64-X.Y.Z.dmg | head -1   # expect HTTP/2 200
-```
-
-If `latest.json` still shows the previous version, the mirror has not finished — do not announce the release until it does. The mirror fails closed, so a failed run leaves the site pointing at the previous good release.
+GitHub Releases is the single download source, and the in-app updater reads that
+same release (its feed repo comes from `PAWWORK_RELEASE_OWNER`), so there is no
+second place that can point at a stale version. Announce the release once Step 4
+reports it published and Step 6 passes.
 
 ## 6. Post-Release Verification
 

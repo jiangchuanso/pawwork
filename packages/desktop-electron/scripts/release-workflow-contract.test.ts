@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest"
 import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { ALLOW_REPUBLISH_ENV } from "./release-republish-policy"
 
 // A unit test cannot prove what a shell workflow does — only that a step whose
 // absence would ship an unverified or incomplete build is still there, and still
@@ -9,6 +10,7 @@ import { join } from "node:path"
 // reformat inside a step does not fail them and a deleted step does.
 const workflow = readFileSync(join(import.meta.dirname, "..", "..", "..", ".github", "workflows", "build.yml"), "utf8")
 const publisher = readFileSync(join(import.meta.dirname, "publish-when-complete.ts"), "utf8")
+const finalizer = readFileSync(join(import.meta.dirname, "finalize-latest-yml.ts"), "utf8")
 
 const steps = workflow
   .split(/\n {6}- name: /)
@@ -58,9 +60,37 @@ describe("release workflow", () => {
     expect(runSourceValidation("finalize", "refs/tags/workflow-snapshot-1", "dev").status).toBe(1)
   })
 
-  test("requires the workflow to name the mirror branch explicitly", () => {
-    expect(publisher).toContain('const mirrorRef = requireEnv("MIRROR_REF")')
-    expect(publisher).not.toMatch(/MIRROR_REF.*\?\?/)
+  // This fork ships GitHub Releases only. The publisher used to hand the
+  // published release to an R2 mirror; that workflow is gone, so anything here
+  // still dispatching it would fail the publish step of a release that had in
+  // fact published correctly.
+  test("publishes without dispatching a download mirror", () => {
+    expect(publisher).not.toMatch(/mirror-release-to-r2/)
+    expect(publisher).not.toMatch(/gh workflow run|dispatchMirror/)
+    expect(workflow).not.toContain("mirror-release-to-r2")
+    expect(workflow).not.toContain("MIRROR_REF")
+    // Only the tag-push orchestrator needs to dispatch a workflow.
+    expect(workflow.match(/actions: write/g) ?? []).toHaveLength(1)
+  })
+
+  // A tag push for a version whose release is already published is a re-publish.
+  // Only the orchestrator can know that, so it has to detect the live release and
+  // forward the opt-in the build jobs gate on — otherwise a re-pushed tag keeps
+  // failing closed, which is exactly the "re-running a torn release is
+  // impossible" failure this pins down.
+  test("forwards the republish opt-in when the pushed tag's release is already published", () => {
+    const detect = stepsRunning(/releases\/tags/)
+    expect(detect.map((step) => step.name)).toEqual(["Detect an already-published release"])
+    // The step writes its decision to the `allow-republish` output (dash form in
+    // the workflow YAML) so the dispatch step can forward it verbatim — that is
+    // the only channel by which a re-pushed tag reaches the build jobs' gate.
+    expect(detect[0].body).toMatch(/allow-republish=\$allow_republish/)
+    expect(detect[0].body).toMatch(/'\.draft'/)
+
+    const dispatch = steps.find((step) => /gh workflow run build\.yml/.test(step.body))
+    expect(dispatch).toBeDefined()
+    expect(dispatch!.body).toMatch(/-f allow_republish="\$ALLOW_REPUBLISH"/)
+    expect(dispatch!.body).toMatch(/ALLOW_REPUBLISH: \$\{\{ steps\.release_state\.outputs\.allow-republish \}\}/)
   })
 
   // electron-builder creates the release when the tag has none and uploads a
@@ -154,5 +184,36 @@ describe("release workflow", () => {
     expect(predownload.body).toMatch(/inputs\.channel != 'dev'/)
     // Dev builds write no updater metadata, so collecting it runs only where finalizing does.
     expect(conditionOfStep("Collect updater metadata")).toBe(conditionOfStep("Finalize updater metadata"))
+
+    // One notion of "the release repository" in every step that touches it: the
+    // draft claim, the metadata finalizer and the auto-publisher must all read
+    // and write the repository PAWWORK_RELEASE_OWNER names, never
+    // github.repository (the fork that happens to be running the workflow) —
+    // pointing the two at different repositories silently verifies one release
+    // and publishes another.
+    for (const name of ["Ensure a single release draft", "Publish release when all targets are complete"]) {
+      expect(steps[indexOfStep(name)].body).toMatch(/GH_REPO: \$\{\{ env\.PUBLISH_OWNER \}\}\/\$\{\{ env\.PUBLISH_REPO \}\}/)
+    }
+    expect(workflow).not.toMatch(/GH_REPO: \$\{\{ github\.repository \}\}/)
+  })
+
+  // Linux joined the release matrix without being added to the publisher, so its
+  // provenance marker was never written and the auto-publisher waited forever
+  // for a target that could never arrive.
+  test("publishes for every non-macOS target that finalizes updater metadata", () => {
+    const condition = conditionOfStep("Publish release when all targets are complete")
+    expect(condition).toMatch(/runner\.os == 'Windows'/)
+    expect(condition).toMatch(/runner\.os == 'Linux'/)
+    expect(condition).toMatch(/inputs\.phase == 'full'/)
+  })
+
+  // The republish opt-in is read from the environment, so the name finalize reads
+  // has to be the name the workflow exports. A typo on either side makes finalize
+  // see `undefined`, which fails closed — the switch silently does nothing while
+  // the job still errors on the published release, exactly the confusing failure
+  // this pins down.
+  test("wires the republish opt-in to the exact flag finalize reads", () => {
+    expect(workflow).toContain(ALLOW_REPUBLISH_ENV + ": ${{ inputs.allow_republish }}")
+    expect(finalizer).toContain("process.env[ALLOW_REPUBLISH_ENV]")
   })
 })

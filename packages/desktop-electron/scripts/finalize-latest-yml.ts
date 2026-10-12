@@ -4,6 +4,13 @@ import path from "path"
 import { promisify } from "node:util"
 import { parseUpdaterMetadata } from "./updater-metadata"
 import { METADATA_FILES, RELEASE_TARGETS } from "./release-targets"
+import {
+  ALLOW_REPUBLISH_ENV,
+  decideFinalizeUpload,
+  parseAllowRepublish,
+  type ReleaseState,
+} from "./release-republish-policy"
+import { releaseProvenanceAssetName } from "./verify-release"
 
 const execFileAsync = promisify(execFile)
 
@@ -136,26 +143,76 @@ async function downloadExisting(tag: string, filename: string) {
   return mergeLatest(cached, live)
 }
 
-// Refuse to rewrite a release that is already published. In the normal flow the
-// release stays a draft until the auto-publisher flips it at the very end, after
-// every target's finalize has run; a published release here therefore means a
-// later same-version build (from a different commit) — clobbering its latest*.yml
-// would point the published metadata at hashes that no longer match the published
-// installers, breaking auto-update. Fail loudly instead (re-release with a bumped
-// version). A missing release is fine: nothing to clobber yet.
+// Guard the updater-metadata upload against an already-published release. In the
+// normal flow the release stays a draft until the auto-publisher flips it at the
+// very end; a published release here means either a later same-version build from
+// a different commit (must fail closed) or an explicit same-version re-run with
+// PAWWORK_RELEASE_ALLOW_REPUBLISH set (allowed to overwrite in place). The
+// decision is a pure, unit-tested contract; when re-publishing we additionally
+// refuse a different-commit clobber via the per-target provenance marker.
 async function assertReleaseIsDraft(releaseTag: string) {
-  let isDraft: boolean
+  const allowRepublish = parseAllowRepublish(process.env[ALLOW_REPUBLISH_ENV])
+  let release: ReleaseState = null
   try {
     const { stdout } = await gh(["release", "view", releaseTag, "--json", "isDraft", "--jq", ".isDraft", "--repo", repo])
-    isDraft = stdout.trim() === "true"
+    release = { isDraft: stdout.trim() === "true" }
   } catch (error) {
     const message = shellErrorText(error)
-    if (/release not found|not found/i.test(message)) return
-    throw new Error(`Failed to read release state for ${releaseTag}: ${message}`)
+    if (/release not found|not found/i.test(message)) release = null
+    else throw new Error(`Failed to read release state for ${releaseTag}: ${message}`)
   }
-  if (!isDraft) {
+
+  const decision = decideFinalizeUpload({ tag: releaseTag, release, allowRepublish })
+  if (decision.action === "fail") {
+    throw new Error(decision.reason)
+  }
+  if (release && !release.isDraft) {
+    // Re-publishing into a live release: refuse a different-commit clobber. The
+    // tag pins the build commit, so a same-version re-run is normally the same
+    // commit; a re-run against a different ref must not rewrite the published
+    // feed. The per-target provenance marker records the commit each target was
+    // built from; if it disagrees with this build, stop.
+    await refuseMismatchedSource(releaseTag)
+    console.warn(`finalize-latest-yml: ${decision.reason}`)
+  }
+}
+
+// When re-publishing into an already-published release, refuse to overwrite if a
+// prior finalize left a provenance marker for THIS target built from a different
+// commit. The published feed must never be pointed at installers from a commit
+// other than the one the rest of the release was built from.
+async function refuseMismatchedSource(releaseTag: string) {
+  const buildSha = process.env.BUILD_SHA
+  const os = process.env.RELEASE_OS
+  const arch = process.env.RELEASE_ARCH
+  if (!buildSha || !os || !arch) {
+    // Without the provenance inputs we cannot guard; the publish step re-checks
+    // single-source, so only warn rather than blocking the re-run.
+    console.warn(
+      "finalize-latest-yml: BUILD_SHA/RELEASE_OS/RELEASE_ARCH unset; skipping same-source guard (publish step will re-check)",
+    )
+    return
+  }
+  const version = releaseTag.replace(/^v/, "")
+  const markerName = releaseProvenanceAssetName(os, arch, version)
+  const dir = await mkdtemp(path.join(tmp, "published-marker-"))
+  try {
+    await gh(["release", "download", releaseTag, "--pattern", markerName, "--dir", dir, "--repo", repo])
+  } catch {
+    // No marker yet (this target never finalized against the published release):
+    // nothing to compare against, so allow the first write.
+    return
+  }
+  let marker: { commit?: string } | undefined
+  try {
+    marker = JSON.parse(await readTextFile(path.join(dir, markerName), "utf8"))
+  } catch {
+    // Malformed marker: treat as not-yet-present rather than blocking.
+    return
+  }
+  if (marker?.commit && marker.commit !== buildSha) {
     throw new Error(
-      `Release ${releaseTag} is already published; refusing to overwrite its updater metadata from a later build`,
+      `Release ${releaseTag} already has a ${markerName} marker built from ${marker.commit}, but this build is ${buildSha}; refusing to overwrite a published release built from a different commit`,
     )
   }
 }

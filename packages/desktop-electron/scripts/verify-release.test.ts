@@ -12,6 +12,8 @@ import {
   verifyReleasePayload,
   type GithubRelease,
 } from "./verify-release"
+import { RELEASE_TARGETS } from "./release-targets"
+import { PAWWORK_UPDATE_CHANNEL } from "../src/main/app-identity"
 
 const originalFetch = globalThis.fetch
 
@@ -73,12 +75,24 @@ const baseRelease: GithubRelease = {
       url: "https://api.example.com/assets/latest-v2-mac.yml",
       browser_download_url: "https://example.com/latest-v2-mac.yml",
     },
+    {
+      name: "pawwork-linux-arm64-2026.4.28.deb",
+      url: "https://api.example.com/assets/pawwork-linux-arm64-2026.4.28.deb",
+      browser_download_url: "https://example.com/pawwork-linux-arm64-2026.4.28.deb",
+    },
+    {
+      name: "latest-v2-linux-arm64.yml",
+      url: "https://api.example.com/assets/latest-v2-linux-arm64.yml",
+      browser_download_url: "https://example.com/latest-v2-linux-arm64.yml",
+    },
   ],
 }
 
 const validLatestYml = "version: 2026.4.28\nfiles:\n  - url: pawwork-win-x64-2026.4.28.exe\n"
 const validLatestMacYml =
   "version: 2026.4.28\nfiles:\n  - url: pawwork-mac-arm64-2026.4.28.zip\n  - url: pawwork-mac-x64-2026.4.28.zip\n"
+
+const validLatestLinuxYml = "version: 2026.4.28\nfiles:\n  - url: pawwork-linux-arm64-2026.4.28.deb\n"
 
 describe("verify-release", () => {
   test("normalizes release tags", () => {
@@ -102,13 +116,32 @@ describe("verify-release", () => {
       "pawwork-mac-x64-2026.4.28.zip.blockmap",
       "pawwork-win-x64-2026.4.28.exe",
       "pawwork-win-x64-2026.4.28.exe.blockmap",
+      "pawwork-linux-arm64-2026.4.28.deb",
       "latest-v2-mac.yml",
       "latest-v2.yml",
+      "latest-v2-linux-arm64.yml",
     ])
     expect(releaseUpdaterAssetNames("2026.4.28")).toEqual({
       "latest-v2.yml": ["pawwork-win-x64-2026.4.28.exe"],
       "latest-v2-mac.yml": ["pawwork-mac-arm64-2026.4.28.zip", "pawwork-mac-x64-2026.4.28.zip"],
+      "latest-v2-linux-arm64.yml": ["pawwork-linux-arm64-2026.4.28.deb"],
     })
+  })
+
+  // app-builder-lib's getUpdateInfoFileName appends `-${arch}` to the Linux
+  // update-info file for every non-x64 arch, and electron-updater's
+  // getChannelFilePrefix derives the same name client-side. The bare
+  // `latest-v2-linux.yml` is the x64 spelling: with it, CI copies a file
+  // electron-builder never writes and would publish a feed no client requests.
+  test("names the linux updater feed with the arch suffix electron-builder emits", () => {
+    const linuxTargets = RELEASE_TARGETS.filter((target) => target.os === "linux")
+    expect(linuxTargets.length).toBeGreaterThan(0)
+    for (const target of linuxTargets) {
+      expect(target.metadata).toBe(`${PAWWORK_UPDATE_CHANNEL}-linux-${target.arch}.yml`)
+    }
+    expect(
+      RELEASE_TARGETS.some((target) => (target.metadata as string) === `${PAWWORK_UPDATE_CHANNEL}-linux.yml`),
+    ).toBe(false)
   })
 
   test("parses updater file urls and path entries", () => {
@@ -154,7 +187,11 @@ path: pawwork-win-x64-2026.4.28.exe
     expect(
       verifyReleasePayload({
         release: baseRelease,
-        metadata: { "latest-v2.yml": validLatestYml, "latest-v2-mac.yml": validLatestMacYml },
+        metadata: {
+          "latest-v2.yml": validLatestYml,
+          "latest-v2-mac.yml": validLatestMacYml,
+          "latest-v2-linux-arm64.yml": validLatestLinuxYml,
+        },
       }),
     ).toEqual([])
   })
@@ -181,7 +218,11 @@ path: pawwork-win-x64-2026.4.28.exe
     expect(
       verifyReleasePayload({
         release: baseRelease,
-        metadata: { "latest-v2.yml": "version: 2026.4.28\nfiles:\n  - url: https://github.com/Astro-Han/pawwork/releases/download/v2026.4.28/pawwork-win-x64-2026.4.28.exe\n", "latest-v2-mac.yml": "version: 2026.4.28\nfiles:\n  - url: https://github.com/Astro-Han/pawwork/releases/download/v2026.4.28/pawwork-mac-arm64-2026.4.28.zip\n  - url: https://github.com/Astro-Han/pawwork/releases/download/v2026.4.28/pawwork-mac-x64-2026.4.28.zip\n" },
+        metadata: {
+          "latest-v2.yml": "version: 2026.4.28\nfiles:\n  - url: https://github.com/Astro-Han/pawwork/releases/download/v2026.4.28/pawwork-win-x64-2026.4.28.exe\n",
+          "latest-v2-mac.yml": "version: 2026.4.28\nfiles:\n  - url: https://github.com/Astro-Han/pawwork/releases/download/v2026.4.28/pawwork-mac-arm64-2026.4.28.zip\n  - url: https://github.com/Astro-Han/pawwork/releases/download/v2026.4.28/pawwork-mac-x64-2026.4.28.zip\n",
+          "latest-v2-linux-arm64.yml": "version: 2026.4.28\nfiles:\n  - url: https://github.com/Astro-Han/pawwork/releases/download/v2026.4.28/pawwork-linux-arm64-2026.4.28.deb\n",
+        },
       }),
     ).toEqual([])
   })
@@ -249,7 +290,7 @@ path: pawwork-win-x64-2026.4.28.exe
   })
 
   test("allowDraft suppresses the draft failure but keeps every other check", () => {
-    const metadata = { "latest-v2.yml": validLatestYml, "latest-v2-mac.yml": validLatestMacYml }
+    const metadata = { "latest-v2.yml": validLatestYml, "latest-v2-mac.yml": validLatestMacYml, "latest-v2-linux-arm64.yml": validLatestLinuxYml }
 
     // A complete draft is fully accepted when drafts are allowed.
     expect(

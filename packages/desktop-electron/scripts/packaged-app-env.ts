@@ -6,6 +6,10 @@ import { releaseTarget } from "./release-targets.ts"
 // directory, Windows puts the executable in one shared directory.
 function outDir(platform: NodeJS.Platform, arch: string) {
   if (platform === "win32") return "dist/win-unpacked"
+  if (platform === "linux") {
+    if (arch === "arm64") return "dist/linux-arm64-unpacked"
+    throw new Error(`Unsupported arch: ${arch}`)
+  }
   if (platform !== "darwin") throw new Error(`Unsupported platform: ${platform}`)
   if (arch === "arm64") return "dist/mac-arm64"
   if (arch === "x64") return "dist/mac"
@@ -26,12 +30,14 @@ export function packagedAppEnv(
   if (!isPawWorkChannel(channel)) throw new Error(`Unsupported channel: ${channel}`)
   const directory = outDir(platform, arch)
   const name = PAWWORK_APP[channel].name
-  const appPath = platform === "win32" ? `${directory}/${name}.exe` : `${directory}/${name}.app`
+  const appPath =
+    platform === "win32" ? `${directory}/${name}.exe` : platform === "linux" ? `${directory}/${name}` : `${directory}/${name}.app`
   return {
     APP_NAME: name,
     APP_OUT_DIR: directory,
     APP_PATH: appPath,
-    EXECUTABLE_PATH: platform === "win32" ? appPath : `${appPath}/Contents/MacOS/${name}`,
+    EXECUTABLE_PATH:
+      platform === "win32" || platform === "linux" ? appPath : `${appPath}/Contents/MacOS/${name}`,
   }
 }
 
@@ -48,7 +54,8 @@ function publishEnv(channel: PawWorkChannel) {
 // a rename there fails silently: the finalizer reads a directory nothing wrote,
 // finds no entries, skips that feed and still exits 0.
 function releaseEnv(platform: NodeJS.Platform, arch: string) {
-  const target = releaseTarget(platform === "win32" ? "win" : "mac", arch)
+  const os = platform === "win32" ? "win" : platform === "linux" ? "linux" : "mac"
+  const target = releaseTarget(os, arch)
   return { METADATA_FILE: target.metadata, METADATA_ARTIFACT: target.metadataArtifact }
 }
 

@@ -80,7 +80,7 @@ describe("electron builder app-update config", () => {
   test("only the production build publishes to the PawWork repository", () => {
     expect(getPublishConfig("dev")).toBeUndefined()
     const prod = getPublishConfig("prod")
-    expect(prod).toMatchObject({ provider: "github", owner: "Astro-Han", repo: "pawwork", channel: "latest-v2" })
+    expect(prod).toMatchObject({ provider: "github", owner: "jiangchuanso", repo: "pawwork", channel: "latest-v2" })
   })
 
   test("mac packaging enables a localized display name", () => {
@@ -88,7 +88,7 @@ describe("electron builder app-update config", () => {
     expect(config.productName).toBe("PawWork")
     expect(config.appId).toBe("ai.pawwork.desktop")
     expect(config.artifactName).toBe("pawwork-${os}-${arch}-${version}.${ext}")
-    expect(config.publish).toMatchObject({ owner: "Astro-Han", repo: "pawwork" })
+    expect(config.publish).toMatchObject({ owner: "jiangchuanso", repo: "pawwork" })
     expect(createConfig("prod").mac?.extendInfo).toMatchObject({
       LSHasLocalizedDisplayName: true,
     })
@@ -121,10 +121,10 @@ describe("electron builder app-update config", () => {
 
   test("packaged repository metadata follows the release channel", () => {
     expect(createConfig("dev").extraMetadata).toMatchObject({
-      repository: { type: "git", url: "https://github.com/Astro-Han/pawwork" },
+      repository: { type: "git", url: "https://github.com/jiangchuanso/pawwork" },
     })
     expect(createConfig("prod").extraMetadata).toMatchObject({
-      repository: { type: "git", url: "https://github.com/Astro-Han/pawwork" },
+      repository: { type: "git", url: "https://github.com/jiangchuanso/pawwork" },
     })
   })
 

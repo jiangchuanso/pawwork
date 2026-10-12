@@ -2,10 +2,9 @@
 // Homepage body, shared by both language pages. `lang` selects the dictionary;
 // the page renders fully server-side in that language. The language toggle is a
 // plain link to the other locale's URL (no client-side innerHTML swap), so each
-// page is independently crawlable. Theme toggle and the R2 download-link swap
-// stay client-side.
+// page is independently crawlable. Only the theme toggle stays client-side.
 import { I18N, type Lang } from "../i18n";
-import { DOWNLOAD, DOWNLOAD_MANIFEST_URL, REPO_URL, RELEASES_URL } from "../config";
+import { DOWNLOAD, REPO_URL, RELEASES_URL } from "../config";
 
 interface Props {
   lang: Lang;
@@ -52,9 +51,10 @@ const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
       <p class="sub" set:html={t["sub"]}></p>
       <div class="dlblock">
         <div class="dl">
-          <a class="dlbtn lead" data-dl="macArm64" href={DOWNLOAD.mac}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#apple"></use></svg><span class="t"><b set:html={t["dl.mac.t"]}></b><span set:html={t["dl.mac.s"]}></span></span></a>
-          <a class="dlbtn" data-dl="macX64" href={DOWNLOAD.macIntel}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#apple"></use></svg><span class="t"><b set:html={t["dl.intel.t"]}></b><span set:html={t["dl.intel.s"]}></span></span></a>
-          <a class="dlbtn" data-dl="winX64" href={DOWNLOAD.win}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#win"></use></svg><span class="t"><b set:html={t["dl.win.t"]}></b><span set:html={t["dl.win.s"]}></span></span></a>
+          <a class="dlbtn lead" href={DOWNLOAD.mac}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#apple"></use></svg><span class="t"><b set:html={t["dl.mac.t"]}></b><span set:html={t["dl.mac.s"]}></span></span></a>
+          <a class="dlbtn" href={DOWNLOAD.macIntel}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#apple"></use></svg><span class="t"><b set:html={t["dl.intel.t"]}></b><span set:html={t["dl.intel.s"]}></span></span></a>
+          <a class="dlbtn" href={DOWNLOAD.win}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#win"></use></svg><span class="t"><b set:html={t["dl.win.t"]}></b><span set:html={t["dl.win.s"]}></span></span></a>
+          <a class="dlbtn" href={DOWNLOAD.linux}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9l3 3-3 3M13 15h4"></path></svg><span class="t"><b set:html={t["dl.linux.t"]}></b><span set:html={t["dl.linux.s"]}></span></span></a>
         </div>
         <div class="meta"><a class="gh2" href={RELEASES_URL}><svg viewBox="0 0 16 16" fill="currentColor"><use href="#gh"></use></svg> <span set:html={t["gh2"]} /></a></div>
         <p class="wnote" set:html={t["wnote"]}></p>
@@ -191,14 +191,16 @@ const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
     <div class="getgrid">
       <div class="dlblock" style="margin-top:0">
         <div class="dl">
-          <a class="dlbtn lead" data-dl="macArm64" href={DOWNLOAD.mac}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#apple"></use></svg><span class="t"><b set:html={t["dl.mac.t"]}></b><span set:html={t["dl.mac.s"]}></span></span></a>
-          <a class="dlbtn" data-dl="macX64" href={DOWNLOAD.macIntel}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#apple"></use></svg><span class="t"><b set:html={t["dl.intel.t"]}></b><span set:html={t["dl.intel.s"]}></span></span></a>
-          <a class="dlbtn" data-dl="winX64" href={DOWNLOAD.win}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#win"></use></svg><span class="t"><b set:html={t["dl.win.t"]}></b><span set:html={t["dl.win.s"]}></span></span></a>
+          <a class="dlbtn lead" href={DOWNLOAD.mac}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#apple"></use></svg><span class="t"><b set:html={t["dl.mac.t"]}></b><span set:html={t["dl.mac.s"]}></span></span></a>
+          <a class="dlbtn" href={DOWNLOAD.macIntel}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#apple"></use></svg><span class="t"><b set:html={t["dl.intel.t"]}></b><span set:html={t["dl.intel.s"]}></span></span></a>
+          <a class="dlbtn" href={DOWNLOAD.win}><svg viewBox="0 0 24 24" fill="currentColor"><use href="#win"></use></svg><span class="t"><b set:html={t["dl.win.t"]}></b><span set:html={t["dl.win.s"]}></span></span></a>
+          <a class="dlbtn" href={DOWNLOAD.linux}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9l3 3-3 3M13 15h4"></path></svg><span class="t"><b set:html={t["dl.linux.t"]}></b><span set:html={t["dl.linux.s"]}></span></span></a>
         </div>
       </div>
       <div class="getright">
         <div class="platline"><svg class="ico-ok" viewBox="0 0 24 24"><use href="#ck"></use></svg><span set:html={t["g.mac"]} /></div>
         <div class="platline"><svg class="ico-warn" viewBox="0 0 24 24"><use href="#warn"></use></svg><span set:html={t["g.win"]} /></div>
+        <div class="platline"><svg class="ico-ok" viewBox="0 0 24 24"><use href="#ck"></use></svg><span set:html={t["g.linux"]} /></div>
         <p class="getprivacy" set:html={t["g.privacy"]}></p>
       </div>
     </div>
@@ -213,7 +215,7 @@ const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
   </div>
 </footer>
 
-<script is:inline define:vars={{ DOWNLOAD_MANIFEST_URL }}>
+<script is:inline>
   const root = document.documentElement;
 
   document.getElementById("tg")?.addEventListener("click", () => {
@@ -223,19 +225,4 @@ const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
       localStorage.setItem("pw-theme", next);
     } catch (e) {}
   });
-
-  // Swap download buttons to China-accessible R2 direct links when the manifest
-  // is reachable. Buttons keep their GitHub Releases href as a fallback if this
-  // fetch fails (offline, R2 down, blocked).
-  fetch(DOWNLOAD_MANIFEST_URL, { cache: "no-store" })
-    .then((res) => (res.ok ? res.json() : null))
-    .then((manifest) => {
-      if (!manifest) return;
-      document.querySelectorAll("[data-dl]").forEach((el) => {
-        const url = manifest[el.getAttribute("data-dl")];
-        // Guard against a compromised manifest injecting javascript: hrefs.
-        if (typeof url === "string" && /^https?:\/\//i.test(url)) el.setAttribute("href", url);
-      });
-    })
-    .catch(() => {});
 </script>

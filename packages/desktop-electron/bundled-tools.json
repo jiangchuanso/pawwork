@@ -14,6 +14,10 @@
       "win32-x64": {
         "name": "uv-x86_64-pc-windows-msvc.zip",
         "sha256": "4c4d49d8738847d9b71ba319e49a5688c93eac0fe6204b1df24e98528dddf39a"
+      },
+      "linux-arm64": {
+        "name": "uv-aarch64-unknown-linux-gnu.tar.gz",
+        "sha256": "9bf43b4d1a07665bf64d4c4e710930b382321a785e0eb10aac07f46471f86a31"
       }
     }
   }

@@ -29,7 +29,8 @@ async function writeLocalizedMacDisplayName(resourcesDir: string, channel: PawWo
   }
 }
 
-const repositoryUrl = (channel: PawWorkChannel) => `https://github.com/Astro-Han/${getPublishConfig(channel)?.repo ?? "pawwork"}`
+const repositoryUrl = (channel: PawWorkChannel) =>
+  `https://github.com/${PAWWORK_RELEASE_OWNER}/${getPublishConfig(channel)?.repo ?? "pawwork"}`
 
 const getBase = (channel: PawWorkChannel): Configuration => ({
   artifactName: "pawwork-${os}-${arch}-${version}.${ext}",
@@ -149,6 +150,15 @@ const getBase = (channel: PawWorkChannel): Configuration => ({
     installerLanguages: ["en_US", "zh_CN"],
     installerIcon: `resources/icons/icon.ico`,
     installerHeaderIcon: `resources/icons/icon.ico`,
+  },
+  linux: {
+    icon: `resources/icons/icon.png`,
+    // Only arm64 is built (see build.yml's linux target); x64 is intentionally
+    // absent so electron-builder does not try to produce an x64 deb it has no
+    // runtime for.
+    target: [{ target: "deb", arch: ["arm64"] }],
+    category: "Development",
+    maintainer: "PawWork",
   },
 })
 
