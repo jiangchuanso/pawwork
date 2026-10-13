@@ -123,14 +123,34 @@ describe("decidePublishAction", () => {
     expect(decide({ release: { ...completeRelease, prerelease: true }, allowRepublish: true }).kind).toBe("publish")
   })
 
-  test("keeps the fail-closed gates under the republish opt-in", () => {
+  test("republish opt-in treats a stale different-commit marker as not-yet-rebuilt (waits), not mixed-source fail", () => {
+    // The tag was re-pointed at a new commit: the win marker still records the
+    // prior build's commit. Under the opt-in that is stale, not fatal — the
+    // publisher waits for win to re-land from the current commit rather than
+    // refusing the whole release.
     const published: GithubRelease = { ...completeRelease, draft: false, prerelease: true }
-    expect(decide({ release: published, allowRepublish: true, provenance: { ...allAgree, "pawwork-win-x64-2026.6.1.commit": { commit: OTHER_SHA, sha512: ["sha-win"] } } }).kind).toBe(
-      "fail",
-    )
+    const decision = decide({
+      release: published,
+      allowRepublish: true,
+      provenance: { ...allAgree, "pawwork-win-x64-2026.6.1.commit": { commit: OTHER_SHA, sha512: ["sha-win"] } },
+    })
+    expect(decision.kind).toBe("wait")
+    expect(decision.reason).toContain("pawwork-win-x64-2026.6.1.commit")
+  })
+
+  test("publishes under the republish opt-in once every target re-landed from the current commit", () => {
+    // All markers now agree on buildSha (every target rebuilt from the new
+    // commit). The stale marker is gone, so the opt-in path publishes cleanly.
+    const published: GithubRelease = { ...completeRelease, draft: false, prerelease: true }
+    expect(decide({ release: published, allowRepublish: true }).kind).toBe("publish")
+  })
+
+  test("republish opt-in still waits on genuine incompleteness (missing installer asset)", () => {
     const partial: GithubRelease = {
-      ...published,
-      assets: published.assets.filter((asset) => asset.name !== "pawwork-linux-arm64-2026.6.1.deb"),
+      ...completeRelease,
+      draft: false,
+      prerelease: true,
+      assets: completeRelease.assets.filter((asset) => asset.name !== "pawwork-linux-arm64-2026.6.1.deb"),
     }
     expect(decide({ release: partial, allowRepublish: true }).kind).toBe("wait")
   })

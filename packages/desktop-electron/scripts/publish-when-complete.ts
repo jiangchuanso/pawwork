@@ -126,10 +126,23 @@ export function decidePublishAction(args: {
     return { kind: "fail", reason: `release ${release.tag_name} is marked as a prerelease` }
   }
 
+  // Under the republish opt-in, a marker from a different commit is STALE: it
+  // belongs to the prior build of this same version (the tag was re-pointed at a
+  // new commit). Treat such markers as not-yet-rebuilt so the publisher waits
+  // for every target to re-land from the current commit, instead of failing the
+  // whole release. The single-source guarantee is re-established once all
+  // expected markers agree on buildSha. Without the opt-in the raw provenance is
+  // used, so a different-commit marker stays fatal (a normal run must never
+  // rewrite a published feed with a mixed source).
+  const activeProvenance = allowRepublish
+    ? Object.fromEntries(Object.entries(provenance).filter(([, marker]) => marker.commit === buildSha))
+    : provenance
+
   // Provenance gate, checked before completeness: any present marker whose commit
   // differs from this target's means the release is being assembled from more
-  // than one commit. Refuse regardless of completeness.
-  const mismatched = Object.entries(provenance).filter(([, marker]) => marker.commit !== buildSha)
+  // than one commit. Refuse regardless of completeness (only reachable without
+  // the opt-in, since stale markers were dropped above under opt-in).
+  const mismatched = Object.entries(activeProvenance).filter(([, marker]) => marker.commit !== buildSha)
   if (mismatched.length > 0) {
     const detail = mismatched.map(([name, marker]) => `${name}=${marker.commit}`).join(", ")
     return {
@@ -144,7 +157,7 @@ export function decidePublishAction(args: {
   // itself is not counted as a failure here; allowPrerelease so the flag we are
   // about to clear does not read as an incomplete release.
   const failures = verifyReleasePayload({ release, metadata }, { allowDraft: true, allowPrerelease: allowRepublish })
-  const missingMarkers = expectedProvenance.filter((name) => !(name in provenance))
+  const missingMarkers = expectedProvenance.filter((name) => !(name in activeProvenance))
   if (failures.length > 0 || missingMarkers.length > 0) {
     const reasons = [...failures, ...missingMarkers.map((name) => `missing provenance marker ${name}`)]
     return { kind: "wait", reason: `release incomplete, waiting for remaining targets: ${reasons.join("; ")}` }
@@ -158,7 +171,7 @@ export function decidePublishAction(args: {
   // empty record (it fails first), so an empty one here is corruption or a
   // stale-tool artifact and must not gate the publish open.
   const known = new Set(updaterSha512s)
-  const drifted = Object.entries(provenance).flatMap(([name, marker]) =>
+  const drifted = Object.entries(activeProvenance).flatMap(([name, marker]) =>
     marker.sha512.length === 0
       ? [`${name}:<no recorded hash>`]
       : marker.sha512.filter((hash) => !known.has(hash)).map((hash) => `${name}:${hash}`),

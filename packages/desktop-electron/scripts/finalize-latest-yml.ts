@@ -167,12 +167,15 @@ async function assertReleaseIsDraft(releaseTag: string) {
     throw new Error(decision.reason)
   }
   if (release && !release.isDraft) {
-    // Re-publishing into a live release: refuse a different-commit clobber. The
-    // tag pins the build commit, so a same-version re-run is normally the same
-    // commit; a re-run against a different ref must not rewrite the published
-    // feed. The per-target provenance marker records the commit each target was
-    // built from; if it disagrees with this build, stop.
-    await refuseMismatchedSource(releaseTag)
+    // Re-publishing into a live release: by default refuse a different-commit
+    // clobber. The tag pins the build commit, so a same-version re-run is
+    // normally the same commit; a re-run against a different ref must not
+    // rewrite the published feed. The per-target provenance marker records the
+    // commit each target was built from; if it disagrees with this build and the
+    // republish opt-in is NOT set, stop. With the opt-in set (a deliberate
+    // same-version re-release from a re-pointed tag), the stale marker belongs
+    // to the prior build of this version, so let it be overwritten in place.
+    await refuseMismatchedSource(releaseTag, allowRepublish)
     console.warn(`finalize-latest-yml: ${decision.reason}`)
   }
 }
@@ -181,7 +184,7 @@ async function assertReleaseIsDraft(releaseTag: string) {
 // prior finalize left a provenance marker for THIS target built from a different
 // commit. The published feed must never be pointed at installers from a commit
 // other than the one the rest of the release was built from.
-async function refuseMismatchedSource(releaseTag: string) {
+async function refuseMismatchedSource(releaseTag: string, allowRepublish: boolean) {
   const buildSha = process.env.BUILD_SHA
   const os = process.env.RELEASE_OS
   const arch = process.env.RELEASE_ARCH
@@ -211,6 +214,15 @@ async function refuseMismatchedSource(releaseTag: string) {
     return
   }
   if (marker?.commit && marker.commit !== buildSha) {
+    if (allowRepublish) {
+      // Deliberate same-version re-release from a re-pointed tag: the marker is
+      // stale (prior build of this version). Overwrite the published feed in
+      // place and let this target re-write its marker with the new commit.
+      console.warn(
+        `finalize-latest-yml: ${releaseTag} ${markerName} was built from ${marker.commit}, but this build is ${buildSha}; PAWWORK_RELEASE_ALLOW_REPUBLISH is set, so overwriting the published feed in place (re-release from a new commit)`,
+      )
+      return
+    }
     throw new Error(
       `Release ${releaseTag} already has a ${markerName} marker built from ${marker.commit}, but this build is ${buildSha}; refusing to overwrite a published release built from a different commit`,
     )
