@@ -139,7 +139,13 @@ describe("release workflow", () => {
     expect(conditionOfStep("Ensure a single release draft")).toBe(conditionOfStep("Finalize updater metadata"))
 
     const uploading = stepsRunning(/gh release upload/)
-    expect(uploading.map((step) => step.name)).toEqual(["Upload notarized artifacts"])
+    // The republish step re-uploads installers into an already-published release
+    // on an explicit opt-in; it is still an upload that must run after the draft
+    // is claimed, so it belongs in the same set as the normal upload step.
+    expect(uploading.map((step) => step.name)).toEqual([
+      "Upload notarized artifacts",
+      "Republish installer artifacts",
+    ])
     // Every mac run that finalizes the feed uploads the installers it describes.
     const macUpload = conditionOfStep("Upload notarized artifacts").match(
       /^\$\{\{ inputs\.channel != 'dev' && (?<mac>runner\.os == 'macOS' .+) \}\}$/,
